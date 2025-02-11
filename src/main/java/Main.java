@@ -1,4 +1,5 @@
 import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -14,7 +15,7 @@ public class Main {
 
         while (true) {
             System.out.print("$ ");
-            String input = scanner.nextLine();
+            String input = scanner.nextLine().trim();
 
             if (input.equals("exit 0")) {
                 System.exit(0);
@@ -23,7 +24,7 @@ public class Main {
             } else if (input.startsWith("echo")) {
                 handleEchoCommand(input);
             } else {
-                System.out.println(input + ": command not found");
+                handleExternalCommand(input, shellBuiltinCommands);
             }
         }
     }
@@ -43,24 +44,71 @@ public class Main {
             return;
         }
 
-        // Check if the command exists in the PATH
+        String commandPath = findCommandInPath(command);
+        if(commandPath != null) {
+            System.out.println(command + " is " + commandPath);
+        } else {
+            System.out.println(command + ": not found");
+        }
+    }
+
+    private static String findCommandInPath(String command) {
         String pathEnv = System.getenv("PATH");
-        if (pathEnv == null || pathEnv.isEmpty()) {
+        if(pathEnv == null || pathEnv.isEmpty()) {
+            return null;
+        }
+
+        String[] pathDirectories = pathEnv.split(":");
+        for(String dir : pathDirectories) {
+            File file = new File(dir, command);
+            if(file.exists() && file.canExecute()) {
+                return file.getAbsolutePath();
+            }
+        }
+        return null;
+    }
+
+    private static void handleExternalCommand(String input, List<String> shellBuiltinCommands) {
+        String[] tokens = input.split(" ");
+        String command = tokens[0];
+
+        if(shellBuiltinCommands.contains(command)) {
+            System.out.println("Unrecognized builtin command: " + command);
+            return;
+        }
+
+        String commandPath = findCommandInPath(command);
+        if(commandPath == null) {
             System.out.println(command + ": not found");
             return;
         }
 
-        String[] pathDirectories = pathEnv.split(":");
-        for (String dir : pathDirectories) {
-            File file = new File(dir, command);
-            if (file.exists() && file.canExecute()) {
-                System.out.println(command + " is " + file.getAbsolutePath());
-                return;
-            }
-        }
+        //Execute the external program
+        try {
+            List<String> commandWithArgs = new ArrayList<>();
+            commandWithArgs.add(commandPath);
+            commandWithArgs.addAll(Arrays.asList(tokens).subList(1, tokens.length));
 
-        // Command not found
-        System.out.println(command + ": not found");
+            ProcessBuilder processBuilder = new ProcessBuilder(commandWithArgs);
+            processBuilder.redirectErrorStream(true); //Merge stdout and stderr
+            Process process = processBuilder.start();
+
+            //Print the output from the executed command
+            Scanner processOutput = new Scanner(process.getInputStream());
+            while(processOutput.hasNextLine()) {
+                String outputLine = processOutput.nextLine();
+
+                //Replace the absolute path with the command name
+                if (outputLine.startsWith("Arg #0 (program name): ")) {
+                    outputLine = outputLine.replace(commandPath, command); // Swap full path with command name
+                }
+
+                System.out.println(outputLine);
+            }
+            process.waitFor();
+        } catch(IOException | InterruptedException e) {
+            System.out.println("Error executing command: " + e.getMessage());
+        }
     }
 
     private static void handleEchoCommand(String input) {
